@@ -3,7 +3,9 @@ import io
 import uuid
 import shutil
 import tempfile
+import zipfile
 from pathlib import Path
+from typing import Optional
 
 import torch
 import soundfile as sf
@@ -165,6 +167,89 @@ async def separate_audio_stream(
         if os.path.exists(tmp_path):
             os.unlink(tmp_path)
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/separate/batch")
+async def separate_batch(files: list[UploadFile] = File(..., description="Multiple audio files to separate")):
+    """
+    Upload multiple audio files for batch separation.
+    Each file gets vocals and no_vocals extracted.
+    Returns a job_id with per-file results and a ZIP download link.
+    """
+    if not files:
+        raise HTTPException(status_code=400, detail="No files provided")
+
+    job_id = str(uuid.uuid4())
+    job_dir = OUTPUT_DIR / job_id
+    job_dir.mkdir(parents=True)
+
+    results = {}
+    failed = []
+
+    for upload in files:
+        fname = upload.filename or f"input_{uuid.uuid4().hex[:6]}.wav"
+        safe_name = os.path.splitext(fname)[0]
+        input_path = job_dir / f"input_{fname}"
+
+        with open(input_path, "wb") as f:
+            content = await upload.read()
+            f.write(content)
+
+        try:
+            stems, sr = separate_file(str(input_path))
+
+            vocals_name = f"{safe_name}_vocals.wav"
+            no_vocals_name = f"{safe_name}_no_vocals.wav"
+
+            save_audio(stems["vocals"], str(job_dir / vocals_name), sr)
+
+            non_vocal_keys = [k for k in stems if k != "vocals"]
+            accompaniment = sum(stems[k] for k in non_vocal_keys)
+            save_audio(accompaniment, str(job_dir / no_vocals_name), sr)
+
+            results[fname] = {
+                "status": "completed",
+                "vocals": f"/download/{job_id}/{vocals_name}",
+                "no_vocals": f"/download/{job_id}/{no_vocals_name}",
+            }
+        except Exception as e:
+            results[fname] = {"status": "failed", "error": str(e)}
+            failed.append(fname)
+        finally:
+            input_path.unlink(missing_ok=True)
+
+    return JSONResponse({
+        "job_id": job_id,
+        "total_files": len(files),
+        "completed": len(files) - len(failed),
+        "failed": len(failed),
+        "files": results,
+        "download_zip": f"/download/{job_id}/all.zip",
+    })
+
+
+@app.get("/download/{job_id}/all.zip")
+async def download_batch_zip(job_id: str):
+    """Download all separated files from a batch job as a ZIP archive."""
+    job_dir = OUTPUT_DIR / job_id
+    if not job_dir.exists():
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    wav_files = [f for f in job_dir.iterdir() if f.is_file() and f.suffix == ".wav"]
+    if not wav_files:
+        raise HTTPException(status_code=404, detail="No output files found")
+
+    zip_buf = io.BytesIO()
+    with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for wav_file in wav_files:
+            zf.write(wav_file, wav_file.name)
+    zip_buf.seek(0)
+
+    return StreamingResponse(
+        zip_buf,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="batch_{job_id}.zip"'},
+    )
 
 
 @app.get("/download/{job_id}/{filename}")

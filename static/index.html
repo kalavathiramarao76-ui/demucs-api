@@ -218,6 +218,7 @@
     <div class="tab-row">
         <div class="tab active" onclick="switchTab('standalone')">Standalone</div>
         <div class="tab" onclick="switchTab('stream')">Stream</div>
+        <div class="tab" onclick="switchTab('batch')">Batch</div>
     </div>
 
     <div class="card tabbed tab-content active" id="tab-standalone">
@@ -282,6 +283,27 @@
         </div>
     </div>
 
+    <!-- Batch Mode -->
+    <div class="card tabbed tab-content" id="tab-batch">
+        <h2>Batch Separate (Multiple Files)</h2>
+        <p class="card-desc">Upload multiple audio files at once. Each file will be separated into <strong>vocals</strong> and <strong>no_vocals</strong>. Download all results as a ZIP.</p>
+
+        <div class="file-drop" id="dropBatch" onclick="document.getElementById('fileBatch').click()">
+            <div class="icon">&#128230;</div>
+            <div>Drop multiple audio files here or click to browse</div>
+            <div style="font-size:12px; margin-top:6px;">Select multiple files — WAV, MP3, FLAC, OGG, M4A</div>
+            <input type="file" id="fileBatch" accept="audio/*" multiple onchange="onBatchSelect(this)">
+        </div>
+
+        <div class="controls">
+            <button onclick="submitBatch()" id="btnBatch">Separate All</button>
+        </div>
+
+        <div class="progress-bar" id="progBatch"><div class="fill"></div></div>
+        <div class="status-box" id="statusBatch"></div>
+        <div class="audio-result" id="resultBatch"></div>
+    </div>
+
     <!-- Job Lookup -->
     <div class="card">
         <h2>Job Lookup</h2>
@@ -322,6 +344,11 @@
                     <td style="padding:8px;"><span class="badge" style="color:#fbbf24; border-color:#92400e;">POST</span></td>
                     <td style="padding:8px; font-family:monospace; color:#818cf8;">/separate/stream?stem=</td>
                     <td style="padding:8px; color:#94a3b8;">Upload & stream back selected stem</td>
+                </tr>
+                <tr style="border-bottom:1px solid #1e293b;">
+                    <td style="padding:8px;"><span class="badge" style="color:#fbbf24; border-color:#92400e;">POST</span></td>
+                    <td style="padding:8px; font-family:monospace; color:#818cf8;">/separate/batch</td>
+                    <td style="padding:8px; color:#94a3b8;">Upload multiple files, separate all, get ZIP</td>
                 </tr>
                 <tr style="border-bottom:1px solid #1e293b;">
                     <td style="padding:8px;"><span class="badge green">GET</span></td>
@@ -473,6 +500,71 @@
 
             btn.disabled = false;
             btn.textContent = 'Stream Audio';
+            prog.style.display = 'none';
+        }
+
+        // Batch file select
+        function onBatchSelect(input) {
+            const drop = document.getElementById('dropBatch');
+            if (input.files.length) {
+                drop.classList.add('has-file');
+                drop.querySelector('div:nth-child(2)').textContent = input.files.length + ' file(s) selected: ' + Array.from(input.files).map(f => f.name).join(', ');
+            }
+        }
+
+        // Batch separation
+        async function submitBatch() {
+            const files = document.getElementById('fileBatch').files;
+            if (!files.length) return alert('Please select audio files first.');
+
+            const btn = document.getElementById('btnBatch');
+            const prog = document.getElementById('progBatch');
+            const status = document.getElementById('statusBatch');
+            const result = document.getElementById('resultBatch');
+
+            btn.disabled = true;
+            btn.textContent = 'Processing ' + files.length + ' files...';
+            prog.style.display = 'block';
+            status.style.display = 'block';
+            result.style.display = 'none';
+            result.innerHTML = '';
+            status.textContent = 'Uploading and separating ' + files.length + ' files... This may take a while.';
+
+            try {
+                const fd = new FormData();
+                Array.from(files).forEach(f => fd.append('files', f));
+                const r = await fetch(B + '/separate/batch', { method: 'POST', body: fd });
+                const j = await r.json();
+
+                if (!r.ok) throw new Error(j.detail || 'Batch failed');
+
+                let txt = 'Batch complete! Job ID: ' + j.job_id + '\n';
+                txt += 'Total: ' + j.total_files + ' | Completed: ' + j.completed + ' | Failed: ' + j.failed + '\n';
+                status.textContent = txt;
+
+                let html = '';
+                for (const [fname, info] of Object.entries(j.files)) {
+                    if (info.status === 'completed') {
+                        const vUrl = B + info.vocals;
+                        const nvUrl = B + info.no_vocals;
+                        html += '<div style="margin:12px 0;padding:12px;background:#0f172a;border-radius:8px;border:1px solid #334155;">';
+                        html += '<div style="color:#c4b5fd;font-weight:600;margin-bottom:8px;">' + fname + '</div>';
+                        html += '<div class="audio-row"><label>Vocals</label><audio src="' + vUrl + '" controls></audio><a href="' + vUrl + '" download>Download</a></div>';
+                        html += '<div class="audio-row"><label>No Vocals</label><audio src="' + nvUrl + '" controls></audio><a href="' + nvUrl + '" download>Download</a></div>';
+                        html += '</div>';
+                    } else {
+                        html += '<div style="margin:8px 0;padding:8px;color:#f87171;">' + fname + ': FAILED — ' + (info.error || 'Unknown error') + '</div>';
+                    }
+                }
+                html += '<div style="margin-top:12px;"><a href="' + B + j.download_zip + '" style="color:#34d399;font-weight:600;text-decoration:none;">Download All as ZIP</a></div>';
+                result.innerHTML = html;
+                result.style.display = 'block';
+            } catch (e) {
+                status.textContent = 'Error: ' + e.message;
+            }
+
+            btn.disabled = false;
+            btn.textContent = 'Separate All';
             prog.style.display = 'none';
         }
 
