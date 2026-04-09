@@ -6,7 +6,8 @@ import tempfile
 from pathlib import Path
 
 import torch
-import torchaudio
+import soundfile as sf
+import numpy as np
 from fastapi import FastAPI, UploadFile, File, HTTPException, Query
 from fastapi.responses import FileResponse, StreamingResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -38,6 +39,12 @@ def get_model_instance():
         model.to(DEVICE)
         model.eval()
     return model
+
+
+def save_audio(tensor, path_or_buf, samplerate):
+    """Save a torch tensor as WAV using soundfile. Tensor shape: (channels, samples)."""
+    audio_np = tensor.numpy().T  # soundfile expects (samples, channels)
+    sf.write(path_or_buf, audio_np, samplerate, format="WAV", subtype="FLOAT")
 
 
 def separate_file(input_path: str):
@@ -92,12 +99,12 @@ async def separate_audio(file: UploadFile = File(...)):
         no_vocals_path = job_dir / "no_vocals.wav"
 
         # Save vocals
-        torchaudio.save(str(vocals_path), stems["vocals"], sr)
+        save_audio(stems["vocals"], str(vocals_path), sr)
 
         # Combine all non-vocal stems into accompaniment
         non_vocal_keys = [k for k in stems if k != "vocals"]
         accompaniment = sum(stems[k] for k in non_vocal_keys)
-        torchaudio.save(str(no_vocals_path), accompaniment, sr)
+        save_audio(accompaniment, str(no_vocals_path), sr)
 
         # Clean up input file
         input_path.unlink(missing_ok=True)
@@ -137,7 +144,7 @@ async def separate_audio_stream(
             audio = sum(stems[k] for k in non_vocal_keys)
 
         buf = io.BytesIO()
-        torchaudio.save(buf, audio, sr, format="wav")
+        save_audio(audio, buf, sr)
         buf.seek(0)
 
         return StreamingResponse(
