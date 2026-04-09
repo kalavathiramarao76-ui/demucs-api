@@ -271,6 +271,34 @@ async def get_job(job_id: str):
     return {"job_id": job_id, "files": files}
 
 
+# ── Fix Swagger UI for batch file upload ─────────────────────────────────────
+
+from fastapi.openapi.utils import get_openapi
+
+
+def custom_openapi():
+    if app.openapi_schema:
+        return app.openapi_schema
+    schema = get_openapi(
+        title=app.title, version=app.version, description=app.description, routes=app.routes,
+    )
+    # Fix batch file upload in both component schemas and inline schemas
+    for name, comp in schema.get("components", {}).get("schemas", {}).items():
+        props = comp.get("properties", {})
+        if "files" in props:
+            props["files"] = {
+                "type": "array",
+                "items": {"type": "string", "format": "binary"},
+                "title": "Audio Files",
+                "description": "Select multiple audio files (use Add Item to add more)",
+            }
+    app.openapi_schema = schema
+    return schema
+
+
+app.openapi = custom_openapi
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8686)
