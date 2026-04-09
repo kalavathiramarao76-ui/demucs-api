@@ -1,0 +1,7 @@
+demucs>=4.0.0
+torch
+torchaudio
+fastapi
+uvicorn[standard]
+python-multipart
+aiofiles
