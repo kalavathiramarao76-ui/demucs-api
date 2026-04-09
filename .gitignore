@@ -5,3 +5,4 @@ __pycache__/
 .env
 *.egg-info/
 *.log
+test_audio.wav
