@@ -9,7 +9,8 @@ import torch
 import soundfile as sf
 import numpy as np
 from fastapi import FastAPI, UploadFile, File, HTTPException, Query
-from fastapi.responses import FileResponse, StreamingResponse, JSONResponse
+from fastapi.responses import FileResponse, StreamingResponse, JSONResponse, HTMLResponse
+from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 
 from demucs.pretrained import get_model
@@ -65,6 +66,14 @@ def separate_file(input_path: str):
         result[name] = sources[i].cpu()
 
     return result, mdl.samplerate
+
+
+STATIC_DIR = Path(__file__).parent / "static"
+
+
+@app.get("/", response_class=HTMLResponse)
+async def homepage():
+    return (STATIC_DIR / "index.html").read_text()
 
 
 @app.on_event("startup")
